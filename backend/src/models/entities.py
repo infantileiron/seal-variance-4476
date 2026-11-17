@@ -1,4 +1,4 @@
-from sqlalchemy import String,Float,Boolean,Integer,ForeignKey,JSON,Text
+from sqlalchemy import String,Float,Boolean,Integer,ForeignKey,JSON,Text,UniqueConstraint
 from sqlalchemy.orm import Mapped,mapped_column
 from src.config.database import Base
 class User(Base):
@@ -25,6 +25,59 @@ class Sample(Base):
     force:Mapped[float]=mapped_column(Float)
     flagged:Mapped[bool]=mapped_column(Boolean,default=False)
     note:Mapped[str]=mapped_column(Text,default='')
+    source:Mapped[str]=mapped_column(String(20),default='manual',server_default='manual')
+    acquisition_batch_id:Mapped[int|None]=mapped_column(ForeignKey('acquisition_batches.id'),nullable=True)
+    acquisition_attempt_id:Mapped[int|None]=mapped_column(ForeignKey('acquisition_attempts.id'),nullable=True,unique=True)
+    curve_ref:Mapped[str]=mapped_column(Text,default='',server_default='')
+class AcquisitionBatch(Base):
+    __tablename__='acquisition_batches'
+    id:Mapped[int]=mapped_column(primary_key=True)
+    code:Mapped[str]=mapped_column(String(50),unique=True)
+    process_id:Mapped[int]=mapped_column(ForeignKey('processes.id'))
+    lot:Mapped[str]=mapped_column(String(60))
+    expected_codes:Mapped[dict]=mapped_column(JSON)
+    issues:Mapped[list]=mapped_column(JSON,default=list,server_default='[]')
+    status:Mapped[str]=mapped_column(String(20),default='collecting')
+    status_reason:Mapped[str]=mapped_column(Text,default='',server_default='')
+    note:Mapped[str]=mapped_column(Text,default='',server_default='')
+    declared_total:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    sealed_at:Mapped[str|None]=mapped_column(String(40),nullable=True)
+    published_at:Mapped[str|None]=mapped_column(String(40),nullable=True)
+    archive_path:Mapped[str]=mapped_column(Text,default='',server_default='')
+    archive_sha256:Mapped[str]=mapped_column(String(64),default='',server_default='')
+    created_by:Mapped[str]=mapped_column(String(120),default='',server_default='')
+    created_at:Mapped[str]=mapped_column(String(40))
+class AcquisitionPacket(Base):
+    __tablename__='acquisition_packets'
+    __table_args__=(UniqueConstraint('batch_id','seq',name='ux_acquisition_packets_batch_seq'),)
+    id:Mapped[int]=mapped_column(primary_key=True)
+    batch_id:Mapped[int]=mapped_column(ForeignKey('acquisition_batches.id'))
+    seq:Mapped[int]=mapped_column(Integer)
+    declared_total:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    curve:Mapped[list]=mapped_column(JSON)
+    events:Mapped[list]=mapped_column(JSON)
+    checksum:Mapped[str]=mapped_column(String(64))
+    received_by:Mapped[str]=mapped_column(String(120),default='',server_default='')
+    received_at:Mapped[str]=mapped_column(String(40))
+class AcquisitionAttempt(Base):
+    __tablename__='acquisition_attempts'
+    __table_args__=(UniqueConstraint('batch_id','attempt_no',name='ux_acquisition_attempts_batch_no'),)
+    id:Mapped[int]=mapped_column(primary_key=True)
+    batch_id:Mapped[int]=mapped_column(ForeignKey('acquisition_batches.id'))
+    specimen_code:Mapped[str]=mapped_column(String(50))
+    attempt_no:Mapped[int]=mapped_column(Integer)
+    attempt_index:Mapped[int]=mapped_column(Integer)
+    open_t:Mapped[float]=mapped_column(Float)
+    close_t:Mapped[float]=mapped_column(Float)
+    point_count:Mapped[int]=mapped_column(Integer)
+    max_force:Mapped[float|None]=mapped_column(Float,nullable=True)
+    peak_t:Mapped[float|None]=mapped_column(Float,nullable=True)
+    valid:Mapped[bool]=mapped_column(Boolean,default=False,server_default='false')
+    selected:Mapped[bool]=mapped_column(Boolean,default=False)
+    selection_mode:Mapped[str]=mapped_column(String(20),default='auto',server_default='auto')
+    selection_note:Mapped[str]=mapped_column(Text,default='',server_default='')
+    curve:Mapped[list]=mapped_column(JSON)
+    created_at:Mapped[str]=mapped_column(String(40))
 class Assessment(Base):
     __tablename__='assessments'
     id:Mapped[int]=mapped_column(primary_key=True)

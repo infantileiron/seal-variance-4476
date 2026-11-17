@@ -2,7 +2,7 @@ import random,json
 from datetime import datetime,timezone
 from sqlalchemy import select,func
 from src.config.database import Base,engine,SessionLocal
-from src.models.entities import User,Process,Sample,Assessment
+from src.models.entities import User,Process,Sample,Assessment,AcquisitionBatch
 from src.utils.security import hash_password
 from src.services.assessments import snapshot_for
 
@@ -25,5 +25,38 @@ def seed():
         if not db.scalar(select(Assessment).where(Assessment.title==title)):
             ids=db.scalars(select(Process.id).where(Process.code.in_(['HC-S1','HC-S2','HC-S3'])).order_by(Process.id)).all()
             db.add(Assessment(title=title,lot='HC-1115',snapshot=snapshot_for(db,ids,'HC-1115'),status='queued',created_at=datetime.now(timezone.utc).isoformat()));db.commit()
-        counts={t.__tablename__:db.scalar(select(func.count()).select_from(t)) for t in [User,Process,Sample,Assessment]};print(json.dumps(counts));return counts
-if __name__=='__main__':seed()
+        seed_acquisition(db,rng)
+        counts={t.__tablename__:db.scalar(select(func.count()).select_from(t)) for t in [User,Process,Sample,Assessment,AcquisitionBatch]}
+        print(json.dumps(counts));return counts
+
+def seed_acquisition(db,rng):
+    """演示一条曲线采集批：3 条试条、其中 1 条重夹；分包乱序补齐，事件与曲线同包下发。"""
+    from src.models.entities import AcquisitionBatch
+    if db.scalar(select(AcquisitionBatch).where(AcquisitionBatch.code=='HC-ACQ-1115')):
+        return
+    from src.services import acquisition
+    from src.schemas.business import AcquisitionBatchInput, PacketInput
+    process=db.scalar(select(Process).where(Process.code=='HC-S1'))
+    analyst=db.scalar(select(User).where(User.role=='analyst'))
+    codes=['HC-S1-901','HC-S1-902','HC-S1-903']
+    batch=acquisition.create_batch(db,AcquisitionBatchInput(
+        code='HC-ACQ-1115',process_id=process.id,lot='HC-1115',expected_codes=codes,
+        note='演示：3 条试条，902 重夹一次'),analyst)
+    packets={seq:{'curve':[],'events':[]} for seq in (1,2,3)}
+    t=0.0
+    for index,code in enumerate(codes,1):
+        for grip in range(2 if code=='HC-S1-902' else 1):
+            base=20.0+index*1.4+(4.0 if grip else 0.0)
+            open_t=t
+            packets[min(3,int(open_t//2)+1)]['events'].append({'type':'open','t':round(open_t,3),'specimen':code})
+            for k in range(12):
+                t+=0.25
+                force=round(max(0.1,base*(0.35+0.65*min(1,k/5))+rng.uniform(-.3,.3)),2)
+                packets[min(3,int(t//2)+1)]['curve'].append({'t':round(t,3),'f':force})
+            t+=0.5
+            packets[min(3,int(t//2)+1)]['events'].append({'type':'close','t':round(t,3),'specimen':code})
+    # 演示乱序到达：先 2、3，再补 1。
+    for seq in (2,3,1):
+        acquisition.receive_packet(db,batch.id,PacketInput(
+            seq=seq,declared_total=3,curve=packets[seq]['curve'],events=packets[seq]['events']),analyst)
+
